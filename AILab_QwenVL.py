@@ -17,6 +17,7 @@ import gc
 import json
 import os
 import platform
+import shutil
 from enum import Enum
 from pathlib import Path
 
@@ -70,6 +71,7 @@ TOOLTIPS = {
     "num_beams": "Beam-search width. Values >1 disable temperature/top_p and trade speed for more stable answers.",
     "repetition_penalty": "Values >1 (e.g., 1.1–1.3) penalize repeated phrases; 1.0 leaves logits untouched.",
     "frame_count": "Number of frames extracted from video inputs before prompting Qwen-VL. More frames provide context but cost time.",
+    "save_quantized_copy": "After loading with 4-bit or 8-bit quantization, save a self-contained snapshot (weights already packed) next to the source model, e.g. '<model>-bnb-nf4'. It's registered as a new model_name automatically - re-add/refresh this node (or restart ComfyUI) to select it, and future loads skip re-quantizing entirely. No effect with FP16 or already-prequantized models.",
 }
 
 class Quantization(str, Enum):
@@ -457,6 +459,12 @@ def ensure_model(model_name):
         raise ValueError(f"Model '{model_name}' not in config")
     repo_id = info["repo_id"]
 
+    # A repo_id that's actually a local folder (e.g. a saved bnb snapshot registered
+    # in custom_models.json) - use it directly, no snapshot_download needed.
+    local_candidate = Path(repo_id)
+    if local_candidate.is_absolute() and local_candidate.is_dir():
+        return str(local_candidate)
+
     # Use ComfyUI's multi-path system if available
     llm_paths = folder_paths.get_folder_paths("LLM") if "LLM" in folder_paths.folder_names_and_paths else []
     if llm_paths:
@@ -513,7 +521,118 @@ def is_fp8_model(model_name: str) -> bool:
     return any(indicator in model_name for indicator in fp8_indicators)
 
 
-def quantization_config(model_name, quantization):
+def saved_bnb_quant_method(model_path):
+    """If model_path already has a BitsAndBytes quantization baked into its
+    config.json (produced by save_quantized_snapshot below), return "nf4" or
+    "int8". Otherwise return None.
+
+    This lets load_model() skip building a fresh BitsAndBytesConfig: from_pretrained()
+    reads the baked-in quantization_config itself and loads the already-packed
+    weights straight into memory, instead of quantizing the full-precision
+    weights again on every run.
+    """
+    config_file = Path(model_path) / "config.json"
+    if not config_file.exists():
+        return None
+    try:
+        with open(config_file, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh) or {}
+        qcfg = cfg.get("quantization_config") or {}
+        if qcfg.get("quant_method") == "bitsandbytes":
+            if qcfg.get("load_in_4bit"):
+                return "nf4"
+            if qcfg.get("load_in_8bit"):
+                return "int8"
+    except Exception as exc:
+        print(f"[QwenVL] Could not inspect {config_file} for baked-in quantization: {exc}")
+    return None
+
+
+def quantized_snapshot_dir(model_path, quant_tag):
+    """Sibling directory used to store a saved bnb-quantized snapshot, e.g.
+    .../Qwen-VL/Qwen3-VL-4B-Instruct -> .../Qwen-VL/Qwen3-VL-4B-Instruct-bnb-nf4
+    """
+    src = Path(model_path)
+    return src.parent / f"{src.name}-bnb-{quant_tag}"
+
+
+# Files that are always safe (and cheap) to copy over verbatim from the source
+# repo if a save_pretrained() call didn't reproduce them - tokenizer/processor
+# assets and vocab files, never the actual model weights.
+_AUX_FILE_ALLOWLIST_SUFFIXES = (
+    ".json", ".jinja", ".txt", ".model", ".vocab",
+)
+# Skip these regardless of extension - either weights, sharding metadata, or
+# things save_pretrained() already writes fresh and shouldn't be overwritten.
+_AUX_FILE_SKIP_NAMES = {
+    "config.json", "generation_config.json",
+    "model.safetensors.index.json",
+}
+_AUX_FILE_SKIP_SUFFIXES = (".safetensors", ".bin", ".lock", ".metadata")
+
+
+def copy_missing_aux_files(source_dir, target_dir):
+    """Copy small leftover files (tokenizer/processor assets, vocab, merges,
+    special-tokens maps, etc.) from the original model folder into a saved
+    quantized snapshot, when save_pretrained() didn't already write them.
+    Never touches weight shards, the sharding index, or anything under a
+    .cache/ subfolder.
+    """
+    source_dir = Path(source_dir)
+    target_dir = Path(target_dir)
+    copied = []
+    for item in source_dir.iterdir():
+        if not item.is_file():
+            continue  # skips .cache/ and any other subfolders
+        name = item.name
+        if name in _AUX_FILE_SKIP_NAMES:
+            continue
+        if item.suffix.lower() in _AUX_FILE_SKIP_SUFFIXES:
+            continue
+        if item.suffix.lower() not in _AUX_FILE_ALLOWLIST_SUFFIXES:
+            continue
+        dest = target_dir / name
+        if dest.exists():
+            continue  # save_pretrained() already produced this one, don't clobber it
+        try:
+            shutil.copy2(item, dest)
+            copied.append(name)
+        except Exception as exc:
+            print(f"[QwenVL] Could not copy {name} into snapshot: {exc}")
+    if copied:
+        print(f"[QwenVL] Copied {len(copied)} auxiliary file(s) from source into snapshot: {', '.join(copied)}")
+
+
+def register_custom_model(name, local_path):
+    """Persist a locally-saved model (e.g. a bnb-quantized snapshot) into
+    custom_models.json so it shows up in the model_name dropdown next time
+    this node's config is (re)loaded.
+    """
+    custom = NODE_DIR / "custom_models.json"
+    data = {}
+    if custom.exists():
+        try:
+            with open(custom, "r", encoding="utf-8") as fh:
+                data = json.load(fh) or {}
+        except Exception as exc:
+            print(f"[QwenVL] Could not read custom_models.json: {exc}")
+    data.setdefault("hf_vl_models", {})
+    if name in data["hf_vl_models"]:
+        return
+    entry = {"repo_id": local_path, "default": False, "quantized": False}
+    data["hf_vl_models"][name] = entry
+    try:
+        with open(custom, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        print(f"[QwenVL] Registered '{name}' -> {local_path} in custom_models.json")
+        print("[QwenVL] Refresh/re-add the node (or restart ComfyUI) to see it in the model_name list")
+        HF_VL_MODELS[name] = entry
+        HF_ALL_MODELS[name] = entry
+    except Exception as exc:
+        print(f"[QwenVL] Failed to write custom_models.json: {exc}")
+
+
+def quantization_config(model_name, quantization, model_path=None):
     """Returns (quant_config, dtype, is_prequantized_fp8).
     
     For pre-quantized FP8 models, we need special handling:
@@ -524,6 +643,10 @@ def quantization_config(model_name, quantization):
     if info.get("quantized") or is_fp8_model(model_name):
         # Pre-quantized model (FP8, etc.)
         return None, None, True
+    if model_path is not None and saved_bnb_quant_method(model_path) is not None:
+        # Already saved with bnb quantization baked in - don't pass a
+        # BitsAndBytesConfig, from_pretrained() restores the packed weights directly.
+        return None, None, False
     if quantization == Quantization.Q4:
         cfg = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -574,6 +697,7 @@ class QwenVLBase:
         use_compile,
         device_choice,
         keep_model_loaded,
+        save_quantized_copy=False,
     ):
         quant = enforce_memory(model_name, Quantization.from_value(quant_value), self.device_info)
         
@@ -611,7 +735,10 @@ class QwenVLBase:
             print("[QwenVL] Clearing previous model from memory before loading new configuration...")
         self.clear()
         model_path = ensure_model(model_name)
-        quant_config, dtype, _ = quantization_config(model_name, quant)
+        quant_config, dtype, _ = quantization_config(model_name, quant, model_path)
+        already_baked_quant = saved_bnb_quant_method(model_path)
+        if already_baked_quant:
+            print(f"[QwenVL] Loading pre-saved bnb {already_baked_quant} snapshot - skipping re-quantization")
         
         # Handle attention mode for loading
         # SageAttention requires loading with SDPA first, then patching
@@ -748,7 +875,35 @@ class QwenVLBase:
                 print(f"[QwenVL] torch.compile skipped: {exc}")
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+        if save_quantized_copy and is_bnb_quantization and not is_prequantized_fp8 and not already_baked_quant:
+            self.save_quantized_snapshot(model_name, model_path, quant)
+
         self.current_signature = signature
+
+    def save_quantized_snapshot(self, model_name, model_path, quant):
+        """Write the currently-loaded bnb-quantized model to disk as a
+        self-contained checkpoint (weights already packed as nf4/int8, plus
+        the quantization_config baked into config.json). Loading this folder
+        later skips re-quantizing the full-precision weights entirely.
+        """
+        quant_tag = "nf4" if quant == Quantization.Q4 else "int8"
+        target_dir = quantized_snapshot_dir(model_path, quant_tag)
+        if target_dir.exists() and any(target_dir.glob("*.safetensors")):
+            print(f"[QwenVL] Quantized snapshot already exists at {target_dir}, skipping save")
+        else:
+            print(f"[QwenVL] Saving {quant_tag} quantized snapshot to {target_dir} ...")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.model.save_pretrained(str(target_dir), safe_serialization=True)
+                self.processor.save_pretrained(str(target_dir))
+                self.tokenizer.save_pretrained(str(target_dir))
+                print(f"[QwenVL] Saved quantized snapshot to {target_dir}")
+            except Exception as exc:
+                print(f"[QwenVL] Failed to save quantized snapshot: {exc}")
+                return
+        copy_missing_aux_files(model_path, target_dir)
+        register_custom_model(f"{model_name}-BNB-{quant_tag.upper()}", str(target_dir))
 
     @staticmethod
     def tensor_to_pil(tensor):
@@ -814,7 +969,7 @@ class QwenVLBase:
         text = self.tokenizer.decode(outputs[0, input_len:], skip_special_tokens=True)
         return text.strip()
 
-    def run(self, model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device):
+    def run(self, model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy=False):
         # Create progress bar with 3 stages: setup, model loading, generation
         pbar = ProgressBar(3)
         
@@ -832,6 +987,7 @@ class QwenVLBase:
             use_torch_compile,
             device,
             keep_model_loaded,
+            save_quantized_copy,
         )
         
         pbar.update_absolute(2, 3, None)
@@ -874,6 +1030,7 @@ class AILab_QwenVL(QwenVLBase):
                 "max_tokens": ("INT", {"default": 512, "min": 64, "max": 2048, "tooltip": TOOLTIPS["max_tokens"]}),
                 "keep_model_loaded": ("BOOLEAN", {"default": True, "tooltip": TOOLTIPS["keep_model_loaded"]}),
                 "seed": ("INT", {"default": 1, "min": 1, "max": 2**32 - 1, "tooltip": TOOLTIPS["seed"]}),
+                "save_quantized_copy": ("BOOLEAN", {"default": False, "tooltip": TOOLTIPS["save_quantized_copy"]}),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -886,8 +1043,8 @@ class AILab_QwenVL(QwenVLBase):
     FUNCTION = "process"
     CATEGORY = "🧪AILab/QwenVL"
 
-    def process(self, model_name, quantization, preset_prompt, custom_prompt, attention_mode, max_tokens, keep_model_loaded, seed, image=None, video=None):
-        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, 16, max_tokens, 0.6, 0.9, 1, 1.2, seed, keep_model_loaded, attention_mode, False, "auto")
+    def process(self, model_name, quantization, preset_prompt, custom_prompt, attention_mode, max_tokens, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
+        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, 16, max_tokens, 0.6, 0.9, 1, 1.2, seed, keep_model_loaded, attention_mode, False, "auto", save_quantized_copy)
 
 class AILab_QwenVL_Advanced(QwenVLBase):
     @classmethod
@@ -919,6 +1076,7 @@ class AILab_QwenVL_Advanced(QwenVLBase):
                 "frame_count": ("INT", {"default": 16, "min": 1, "max": 64, "tooltip": TOOLTIPS["frame_count"]}),
                 "keep_model_loaded": ("BOOLEAN", {"default": True, "tooltip": TOOLTIPS["keep_model_loaded"]}),
                 "seed": ("INT", {"default": 1, "min": 1, "max": 2**32 - 1, "tooltip": TOOLTIPS["seed"]}),
+                "save_quantized_copy": ("BOOLEAN", {"default": False, "tooltip": TOOLTIPS["save_quantized_copy"]}),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -931,8 +1089,8 @@ class AILab_QwenVL_Advanced(QwenVLBase):
     FUNCTION = "process"
     CATEGORY = "🧪AILab/QwenVL"
 
-    def process(self, model_name, quantization, attention_mode, use_torch_compile, device, preset_prompt, custom_prompt, max_tokens, temperature, top_p, num_beams, repetition_penalty, frame_count, keep_model_loaded, seed, image=None, video=None):
-        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device)
+    def process(self, model_name, quantization, attention_mode, use_torch_compile, device, preset_prompt, custom_prompt, max_tokens, temperature, top_p, num_beams, repetition_penalty, frame_count, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
+        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy)
 
 NODE_CLASS_MAPPINGS = {
     "AILab_QwenVL": AILab_QwenVL,
