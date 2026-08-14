@@ -20,22 +20,6 @@
         "4bit": 1.5
       }
     },
-    "Qwen3-VL-2B-Instruct-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-2B-Instruct-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 2.5
-      }
-    },
-    "Qwen3-VL-2B-Thinking-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-2B-Thinking-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 2.5
-      }
-    },
     "Qwen3-VL-4B-Instruct": {
       "repo_id": "Qwen/Qwen3-VL-4B-Instruct",
       "default": true,
@@ -54,22 +38,6 @@
         "full": 6.0,
         "8bit": 3.5,
         "4bit": 2.0
-      }
-    },
-    "Qwen3-VL-4B-Instruct-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-4B-Instruct-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 2.5
-      }
-    },
-    "Qwen3-VL-4B-Thinking-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-4B-Thinking-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 2.5
       }
     },
     "Qwen3-VL-8B-Instruct": {
@@ -92,22 +60,6 @@
         "4bit": 4.5
       }
     },
-    "Qwen3-VL-8B-Instruct-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-8B-Instruct-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 7.5
-      }
-    },
-    "Qwen3-VL-8B-Thinking-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-8B-Thinking-FP8",
-      "default": false,
-      "quantized": true,
-      "vram_requirement": {
-        "full": 7.5
-      }
-    },
     "Qwen3-VL-32B-Instruct": {
       "repo_id": "Qwen/Qwen3-VL-32B-Instruct",
       "default": false,
@@ -128,24 +80,60 @@
         "4bit": 8.5
       }
     },
-    "Qwen3-VL-32B-Instruct-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-32B-Instruct-FP8",
-      "default": false,
-      "quantized": true,
+    "Qwen3.5-4B-heretic-v2": {
+      "repo_id": "tvall43/Qwen3.5-4B-heretic-v2",
+      "default": true,
+      "quantized": false,
       "vram_requirement": {
-        "full": 24.0
+        "full": 9.0
       }
     },
-    "Qwen3-VL-32B-Thinking-FP8": {
-      "repo_id": "Qwen/Qwen3-VL-32B-Thinking-FP8",
+    "Qwen3.5-9B-ultra-uncensored-heretic-v2": {
+      "repo_id": "llmfan46/Qwen3.5-9B-ultra-uncensored-heretic-v2",
       "default": false,
-      "quantized": true,
+      "quantized": false,
       "vram_requirement": {
-        "full": 24.0
+        "full": 19.0
       }
     },
-    "Qwen2.5-VL-3B-Instruct": {
-      "repo_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+    "Qwen3.5-4B": {
+      "repo_id": "Qwen/Qwen3.5-4B",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 9.0
+      }
+    },
+    "Qwen3.5-9B": {
+      "repo_id": "Qwen/Qwen3.5-9B",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 19.0
+      }
+    },
+    "Qwen3-VL-4B-Instruct-Abliterated": {
+      "repo_id": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+      "default": true,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 6.0,
+        "8bit": 3.5,
+        "4bit": 2.0
+      }
+    },
+    "Qwen3-VL-8B-Instruct-Abliterated": {
+      "repo_id": "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 12.0,
+        "8bit": 7.0,
+        "4bit": 4.5
+      }
+    },
+    "Qwen3-VL-4B-Instruct-Unredacted-MAX": {
+      "repo_id": "prithivMLmods/Qwen3-VL-4B-Instruct-Unredacted-MAX",
       "default": false,
       "quantized": false,
       "vram_requirement": {
@@ -154,14 +142,84 @@
         "4bit": 2.0
       }
     },
-    "Qwen2.5-VL-7B-Instruct": {
-      "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "Qwen3-VL-8B-Instruct-Unredacted-MAX": {
+      "repo_id": "prithivMLmods/Qwen3-VL-8B-Instruct-Unredacted-MAX",
       "default": false,
       "quantized": false,
       "vram_requirement": {
-        "full": 15.0,
-        "8bit": 8.5,
-        "4bit": 5.0
+        "full": 12.0,
+        "8bit": 7.0,
+        "4bit": 4.5
+      }
+    },
+    "Qwen3-VL-8B-Instruct-abliterated-v1": {
+      "repo_id": "prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v1",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 12.0,
+        "8bit": 7.0,
+        "4bit": 4.5
+      }
+    },
+    "Qwen3-VL-4B-Instruct-abliterated-v1": {
+      "repo_id": "prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 6.0,
+        "8bit": 3.5,
+        "4bit": 2.0
+      }
+    },
+    "Qwen3-VL-32B-Heretic-v2": {
+      "repo_id": "rpDungeon/Qwen3-VL-32B-Heretic-v2",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 48.0,
+        "8bit": 28.0,
+        "4bit": 16.0
+      }
+    },
+    "Gemma-3-4B-it-Heretic": {
+      "repo_id": "coder3101/gemma-3-4b-it-heretic",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 8.0,
+        "8bit": 4.5,
+        "4bit": 2.5
+      }
+    },
+    "Gemma-3-12B-it-Heretic": {
+      "repo_id": "p-e-w/gemma-3-12b-it-heretic",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 24.0,
+        "8bit": 13.0,
+        "4bit": 7.0
+      }
+    },
+    "Gemma-3-4B-it": {
+      "repo_id": "google/gemma-3-4b-it",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 8.0,
+        "8bit": 4.5,
+        "4bit": 2.5
+      }
+    },
+    "Gemma-3-12B-it": {
+      "repo_id": "google/gemma-3-12b-it",
+      "default": false,
+      "quantized": false,
+      "vram_requirement": {
+        "full": 24.0,
+        "8bit": 13.0,
+        "4bit": 7.0
       }
     }
   },
