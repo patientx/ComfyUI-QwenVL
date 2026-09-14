@@ -1,14 +1,16 @@
 import json
+import os
 import re
 from pathlib import Path
-import folder_paths
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
-
 from AILab_Utils import (
     PLUGIN_DIR,
     CUSTOM_MODELS_PATH,
     estimate_vram_requirement,
+    folder_paths,
+    safe_dirname,
 )
+from comfy.utils import ProgressBar
 
 
 def _update_custom_models_json(
@@ -37,9 +39,10 @@ def _update_custom_models_json(
         except Exception as exc:
             print(f"[AILab Downloader] Warning: Failed to read custom_models.json: {exc}")
 
-    repo_parts = repo_id.split("/")
-    author = repo_parts[0] if len(repo_parts) > 1 else "custom"
-    repo_name = repo_parts[-1]
+    repo_parts = [p.strip() for p in (repo_id or "").replace("\\", "/").split("/") if p.strip()]
+    author = safe_dirname(repo_parts[0]) if len(repo_parts) > 1 else "custom"
+    repo_name = safe_dirname(repo_parts[-1]) if repo_parts else "unknown"
+    clean_repo_id = f"{author}/{repo_name}" if len(repo_parts) > 1 else repo_name
 
     is_gguf = save_folder == "LLM/GGUF" or (filename and filename.lower().endswith(".gguf")) or ("gguf" in repo_name.lower())
 
@@ -63,7 +66,7 @@ def _update_custom_models_json(
             entry = {
                 "author": author,
                 "repo_name": repo_name,
-                "repo_id": repo_id,
+                "repo_id": clean_repo_id,
                 "model_files": [downloaded_file] if downloaded_file else [],
                 "defaults": {
                     "context_length": 8192
@@ -125,13 +128,17 @@ class AILab_HuggingFaceDownloader:
             "required": {
                 "repo_id": ("STRING", {"default": "", "tooltip": "HuggingFace Repo ID (e.g., Qwen/Qwen2.5-VL-3B-Instruct or unsloth/Qwen3.8-27B-GGUF)"}),
                 "filename": ("STRING", {"default": "", "tooltip": "Specific filename to download (e.g., Qwen3.8-27B-UD-Q3_K_XL.gguf). Leave empty to download the entire repository."}),
+                "download_source": (["HuggingFace", "hf-mirror"], {"default": "HuggingFace", "tooltip": "Download source endpoint. Choose hf-mirror for fast acceleration in mainland China."}),
                 "save_folder": (["auto", "LLM/GGUF", "LLM", "checkpoints", "loras"], {"default": "auto", "tooltip": "Destination folder. 'auto' automatically saves GGUF to models/LLM/GGUF and Transformers to models/LLM."}),
                 "auto_add_to_custom_models": ("BOOLEAN", {"default": True, "tooltip": "Automatically add this model to custom_models.json upon download completion"}),
                 "model_category": (["auto", "vision_language", "text_only"], {"default": "auto", "tooltip": "Category to place in custom_models.json"}),
             },
             "optional": {
                 "mmproj_filename": ("STRING", {"default": "", "tooltip": "Optional: Specific mmproj file to download (leave empty to auto-detect mmproj from repo)"}),
-            }
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -143,15 +150,20 @@ class AILab_HuggingFaceDownloader:
         self,
         repo_id,
         filename,
+        download_source="HuggingFace",
         save_folder="auto",
         auto_add_to_custom_models=True,
         model_category="auto",
         mmproj_filename="",
+        unique_id=None,
         **kwargs,
     ):
         base_models_dir = Path(folder_paths.models_dir)
         fname_clean = filename.strip() if filename else ""
-        repo_clean = repo_id.strip() if repo_id else ""
+        repo_parts = [p.strip() for p in (repo_id or "").replace("\\", "/").split("/") if p.strip()]
+        author = safe_dirname(repo_parts[0]) if len(repo_parts) > 1 else "custom"
+        repo_name = safe_dirname(repo_parts[-1]) if repo_parts else "unknown"
+        repo_clean = f"{author}/{repo_name}" if len(repo_parts) > 1 else repo_name
         is_gguf = (bool(fname_clean) and fname_clean.lower().endswith(".gguf")) or ("gguf" in repo_clean.lower())
 
         if save_folder == "auto" or not save_folder:
@@ -172,10 +184,6 @@ class AILab_HuggingFaceDownloader:
         target_dir = base_models_dir.joinpath(*save_parts)
 
         # We put the downloaded model in a subfolder named after the repo to avoid clutter
-        repo_parts = repo_clean.split("/")
-        author = repo_parts[0] if len(repo_parts) > 1 else "custom"
-        repo_name = repo_parts[-1]
-
         final_dir = target_dir / author / repo_name
         final_dir.mkdir(parents=True, exist_ok=True)
 
@@ -184,42 +192,53 @@ class AILab_HuggingFaceDownloader:
         detected_mmproj = None
         downloaded_files_list = []
 
-        # Check HuggingFace for mmproj projector files
-        try:
-            api = HfApi()
-            repo_files = api.list_repo_files(repo_id=repo_id.strip())
-            mmproj_files = [f for f in repo_files if "mmproj" in f.lower() and f.endswith(".gguf")]
-        except Exception:
-            mmproj_files = []
-
-        is_vl = model_category == "vision_language" or (
-            model_category == "auto" and (bool(mmproj_files) or "vl" in repo_id.lower() or "vision" in repo_id.lower())
-        )
+        use_mirror = "hf-mirror" in (download_source or "").lower()
+        endpoint = "https://hf-mirror.com" if use_mirror else None
+        old_hf_endpoint = os.environ.get("HF_ENDPOINT")
+        if use_mirror:
+            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+            print("[AILab Downloader] Using mirror endpoint: https://hf-mirror.com")
 
         try:
-            if filename.strip():
+            pbar = ProgressBar(3)
+            pbar.update_absolute(1, 3)
+
+            try:
+                api = HfApi(endpoint=endpoint)
+                repo_files = api.list_repo_files(repo_id=repo_clean)
+                mmproj_files = [f for f in repo_files if "mmproj" in f.lower() and f.endswith(".gguf")]
+            except Exception:
+                mmproj_files = []
+
+            is_vl = model_category == "vision_language" or (
+                model_category == "auto" and (bool(mmproj_files) or "vl" in repo_clean.lower() or "vision" in repo_clean.lower())
+            )
+
+            if fname_clean:
                 # Download main model file
                 downloaded_path = hf_hub_download(
-                    repo_id=repo_id.strip(),
-                    filename=filename.strip(),
+                    repo_id=repo_clean,
+                    filename=fname_clean,
                     repo_type="model",
                     local_dir=str(final_dir),
                     local_dir_use_symlinks=False,
+                    endpoint=endpoint,
                 )
                 downloaded_files_list.append(Path(downloaded_path).name)
                 print(f"[AILab Downloader] Successfully downloaded file to: {downloaded_path}")
 
                 # If GGUF Vision-Language, check/download mmproj
                 if is_gguf and is_vl:
-                    if mmproj_filename and mmproj_filename.strip():
-                        chosen_mmproj = mmproj_filename.strip()
-                        print(f"[AILab Downloader] Downloading user-specified visual projector: {chosen_mmproj}...")
+                    mmproj_clean = mmproj_filename.strip() if mmproj_filename else ""
+                    if mmproj_clean:
+                        print(f"[AILab Downloader] Downloading user-specified visual projector: {mmproj_clean}...")
                         mmproj_path = hf_hub_download(
-                            repo_id=repo_id.strip(),
-                            filename=chosen_mmproj,
+                            repo_id=repo_clean,
+                            filename=mmproj_clean,
                             repo_type="model",
                             local_dir=str(final_dir),
                             local_dir_use_symlinks=False,
+                            endpoint=endpoint,
                         )
                         detected_mmproj = Path(mmproj_path).name
                         downloaded_files_list.append(detected_mmproj)
@@ -228,7 +247,7 @@ class AILab_HuggingFaceDownloader:
                         local_mmprojs = list(final_dir.glob("*mmproj*.gguf"))
                         if local_mmprojs:
                             # Match quant if possible
-                            model_stem = Path(filename).stem.lower()
+                            model_stem = Path(fname_clean).stem.lower()
                             matched = None
                             for lm in local_mmprojs:
                                 if "q8" in model_stem and "q8" in lm.name.lower():
@@ -241,7 +260,7 @@ class AILab_HuggingFaceDownloader:
                             downloaded_files_list.append(f"{detected_mmproj} (local cache)")
                         elif mmproj_files:
                             # Find best remote mmproj
-                            model_stem = Path(filename).stem.lower()
+                            model_stem = Path(fname_clean).stem.lower()
                             chosen_mmproj = mmproj_files[0]
                             for mf in mmproj_files:
                                 if "q8" in model_stem and "q8" in mf.lower():
@@ -252,11 +271,12 @@ class AILab_HuggingFaceDownloader:
 
                             print(f"[AILab Downloader] Auto-downloading visual projector (mmproj): {chosen_mmproj}...")
                             mmproj_path = hf_hub_download(
-                                repo_id=repo_id.strip(),
+                                repo_id=repo_clean,
                                 filename=chosen_mmproj,
                                 repo_type="model",
                                 local_dir=str(final_dir),
                                 local_dir_use_symlinks=False,
+                                endpoint=endpoint,
                             )
                             detected_mmproj = Path(mmproj_path).name
                             downloaded_files_list.append(detected_mmproj)
@@ -264,11 +284,12 @@ class AILab_HuggingFaceDownloader:
             else:
                 # Download the entire repo
                 downloaded_path = snapshot_download(
-                    repo_id=repo_id.strip(),
+                    repo_id=repo_clean,
                     repo_type="model",
                     local_dir=str(final_dir),
                     local_dir_use_symlinks=False,
                     ignore_patterns=["*.msgpack", "*.h5", "coreml/*"],
+                    endpoint=endpoint,
                 )
                 downloaded_files_list.append("Entire repository snapshot")
                 print(f"[AILab Downloader] Successfully downloaded repo to: {downloaded_path}")
@@ -277,16 +298,20 @@ class AILab_HuggingFaceDownloader:
                 if local_mmprojs:
                     detected_mmproj = local_mmprojs[0].name
 
+            pbar.update_absolute(2, 3)
+
             registration_info = None
             if auto_add_to_custom_models:
                 registration_info = _update_custom_models_json(
-                    repo_id=repo_id.strip(),
+                    repo_id=repo_clean,
                     local_path=str(downloaded_path),
                     save_folder=resolved_folder,
-                    filename=filename.strip(),
+                    filename=fname_clean,
                     model_type="vision_language" if is_vl else model_category,
                     mmproj_filename=detected_mmproj,
                 )
+
+            pbar.update_absolute(3, 3)
 
             # Build comprehensive model_info summary
             files_str = "\n  - ".join(downloaded_files_list) if downloaded_files_list else str(downloaded_path)
@@ -300,7 +325,7 @@ class AILab_HuggingFaceDownloader:
                 f"📥 [QwenVL Downloader] Download Summary\n"
                 f"==================================================\n"
                 f"• Status: ✅ Completed Successfully\n"
-                f"• Repository: {repo_id}\n"
+                f"• Repository: {repo_clean}\n"
                 f"• Save Location: {final_dir}\n"
                 f"• Downloaded Files:\n  - {files_str}"
                 f"{json_snippet}\n"
@@ -309,7 +334,7 @@ class AILab_HuggingFaceDownloader:
 
             summary_data = {
                 "status": "success",
-                "repo_id": repo_id.strip(),
+                "repo_id": repo_clean,
                 "save_folder": str(final_dir),
                 "files": downloaded_files_list,
                 "registration": registration_info,
@@ -328,14 +353,14 @@ class AILab_HuggingFaceDownloader:
                 f"==================================================\n"
                 f"❌ [QwenVL Downloader] Download Failed\n"
                 f"==================================================\n"
-                f"• Repository: {repo_id}\n"
+                f"• Repository: {repo_clean}\n"
                 f"• Error: {str(e)}\n"
                 f"=================================================="
             )
             print(f"[AILab Downloader] {error_msg}")
             summary_data = {
                 "status": "error",
-                "repo_id": repo_id.strip(),
+                "repo_id": repo_clean,
                 "error": str(e),
             }
             return {
@@ -345,6 +370,11 @@ class AILab_HuggingFaceDownloader:
                 },
                 "result": (error_msg,),
             }
+        finally:
+            if old_hf_endpoint is not None:
+                os.environ["HF_ENDPOINT"] = old_hf_endpoint
+            elif "HF_ENDPOINT" in os.environ and use_mirror:
+                del os.environ["HF_ENDPOINT"]
 
 
 NODE_CLASS_MAPPINGS = {
