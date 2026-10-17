@@ -1082,6 +1082,7 @@ class AILab_QwenVL(QwenVLBase):
                 "attention_mode": (ATTENTION_MODES, {"default": "auto", "tooltip": TOOLTIPS["attention_mode"]}),
                 "preset_prompt": (prompts, {"default": default_prompt, "tooltip": TOOLTIPS["preset_prompt"]}),
                 "custom_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": TOOLTIPS["custom_prompt"]}),
+                "enable_thinking": (["False", "True"], {"default": "False", "tooltip": "Disable or enable internal chain-of-thought reasoning/thinking for Qwen3.5 models."}),
                 "max_tokens": ("INT", {"default": 512, "min": 64, "max": 2048, "tooltip": TOOLTIPS["max_tokens"]}),
                 "keep_model_loaded": ("BOOLEAN", {"default": True, "tooltip": TOOLTIPS["keep_model_loaded"]}),
                 "seed": ("INT", {"default": 1, "min": 1, "max": 2**32 - 1, "tooltip": TOOLTIPS["seed"]}),
@@ -1098,8 +1099,8 @@ class AILab_QwenVL(QwenVLBase):
     FUNCTION = "process"
     CATEGORY = "🧪AILab/QwenVL"
 
-    def process(self, model_name, quantization, preset_prompt, custom_prompt, attention_mode, max_tokens, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
-        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, 16, max_tokens, 0.6, 0.9, 1, 1.2, seed, keep_model_loaded, attention_mode, False, "auto", save_quantized_copy, video_frame_size="auto")
+    def process(self, model_name, quantization, preset_prompt, custom_prompt, enable_thinking, attention_mode, max_tokens, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
+        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, 16, max_tokens, 0.6, 0.9, 1, 1.2, seed, keep_model_loaded, attention_mode, False, "auto", save_quantized_copy, video_frame_size="auto", enable_thinking=enable_thinking)
 
 class AILab_QwenVL_Advanced(QwenVLBase):
     @classmethod

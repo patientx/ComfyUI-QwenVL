@@ -76,6 +76,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
                 "prompt_text": ("STRING", {"default": "", "multiline": True, "tooltip": "Prompt text to enhance. Leave blank to just emit the preset instruction."}),
                 "enhancement_style": (styles, {"default": default_style}),
                 "custom_system_prompt": ("STRING", {"default": "", "multiline": True}),
+                "enable_thinking": (["False", "True"], {"default": "False", "tooltip": "Disable or enable internal chain-of-thought reasoning/thinking for Qwen3.5 models."}),
                 "max_tokens": ("INT", {"default": 256, "min": 32, "max": 1024}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.0}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0}),
@@ -95,6 +96,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
         prompt_text,
         enhancement_style,
         custom_system_prompt,
+        enable_thinking,
         max_tokens,
         temperature,
         top_p,
@@ -120,6 +122,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
                 repetition_penalty,
                 keep_model_loaded,
                 seed,
+                enable_thinking,
             )
         else:
             enhanced = self._invoke_qwen(
@@ -135,6 +138,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
                 repetition_penalty,
                 keep_model_loaded,
                 seed,
+                enable_thinking,
             )
         return (enhanced.strip(),)
 
@@ -152,6 +156,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
         repetition_penalty,
         keep_model_loaded,
         seed,
+        enable_thinking,
     ):
         output = self.run(
             model_name=model_name,
@@ -171,6 +176,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
             attention_mode=attention_mode,
             use_torch_compile=use_torch_compile,
             device=device,
+            enable_thinking=enable_thinking,
         )
         return output[0]
 
@@ -232,6 +238,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
         repetition_penalty,
         keep_model_loaded,
         seed,
+        enable_thinking,
     ):
         torch.manual_seed(seed)
         self._load_text_model(model_name, quantization, device)
@@ -250,6 +257,7 @@ class AILab_QwenVL_PromptEnhancer(QwenVLBase):
                 add_generation_prompt=True,
                 return_tensors="pt",
                 return_dict=True,
+                enable_thinking=str(enable_thinking).strip().lower() == "true",
             )
             inputs = {k: v.to(device_choice) for k, v in encoded.items()}
         else:
