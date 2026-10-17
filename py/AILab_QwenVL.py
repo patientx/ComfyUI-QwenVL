@@ -964,6 +964,7 @@ class QwenVLBase:
         num_beams,
         repetition_penalty,
         video_frame_size="auto",
+        enable_thinking="False",
     ):
         conversation = [{"role": "user", "content": []}]
         if image is not None:
@@ -981,7 +982,11 @@ class QwenVLBase:
             if pil_frames:
                 conversation[0]["content"].append({"type": "video", "video": pil_frames})
         conversation[0]["content"].append({"type": "text", "text": prompt_text})
-        chat = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
+
+        # Convert string dropdown toggle to actual Python boolean
+        bool_thinking = True if str(enable_thinking).strip().lower() == "true" else False
+        
+        chat = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True,enable_thinking=bool_thinking)
         images = [item["image"] for item in conversation[0]["content"] if item["type"] == "image"]
         video_frames = [frame for item in conversation[0]["content"] if item["type"] == "video" for frame in item["video"]]
         videos = [video_frames] if video_frames else None
@@ -1012,7 +1017,7 @@ class QwenVLBase:
         text = self.tokenizer.decode(outputs[0, input_len:], skip_special_tokens=True)
         return text.strip()
 
-    def run(self, model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy=False, video_frame_size="auto"):
+    def run(self, model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy=False, video_frame_size="auto", enable_thinking="False"):
         # Create progress bar with 3 stages: setup, model loading, generation
         pbar = ProgressBar(3)
         
@@ -1047,6 +1052,7 @@ class QwenVLBase:
                 num_beams,
                 repetition_penalty,
                 video_frame_size=video_frame_size,
+                enable_thinking=enable_thinking,
             )
             
             pbar.update_absolute(3, 3, None)
@@ -1122,6 +1128,7 @@ class AILab_QwenVL_Advanced(QwenVLBase):
                 "device": (device_options, {"default": "auto", "tooltip": TOOLTIPS["device"]}),
                 "preset_prompt": (prompts, {"default": default_prompt, "tooltip": TOOLTIPS["preset_prompt"]}),
                 "custom_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": TOOLTIPS["custom_prompt"]}),
+                "enable_thinking": (["False", "True"], {"default": "False", "tooltip": "Disable or enable internal chain-of-thought reasoning/thinking for Qwen3.5 models."}),
                 "max_tokens": ("INT", {"default": 512, "min": 64, "max": 4096, "tooltip": TOOLTIPS["max_tokens"]}),
                 "temperature": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "tooltip": TOOLTIPS["temperature"]}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "tooltip": TOOLTIPS["top_p"]}),
@@ -1144,8 +1151,8 @@ class AILab_QwenVL_Advanced(QwenVLBase):
     FUNCTION = "process"
     CATEGORY = "🧪AILab/QwenVL"
 
-    def process(self, model_name, quantization, attention_mode, use_torch_compile, device, preset_prompt, custom_prompt, max_tokens, temperature, top_p, num_beams, repetition_penalty, frame_count, video_frame_size, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
-        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy, video_frame_size=video_frame_size)
+    def process(self, model_name, quantization, attention_mode, use_torch_compile, device, preset_prompt, custom_prompt, enable_thinking, max_tokens, temperature, top_p, num_beams, repetition_penalty, frame_count, video_frame_size, keep_model_loaded, seed, save_quantized_copy=False, image=None, video=None):
+        return self.run(model_name, quantization, preset_prompt, custom_prompt, image, video, frame_count, max_tokens, temperature, top_p, num_beams, repetition_penalty, seed, keep_model_loaded, attention_mode, use_torch_compile, device, save_quantized_copy, video_frame_size=video_frame_size, enable_thinking=enable_thinking)
 
 NODE_CLASS_MAPPINGS = {
     "AILab_QwenVL": AILab_QwenVL,
